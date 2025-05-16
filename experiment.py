@@ -10,6 +10,7 @@ from torchvision import transforms
 import torchvision.utils as vutils
 from torchvision.datasets import CelebA
 from torch.utils.data import DataLoader
+from ignite.metrics import FID, InceptionScore
 
 
 class VAEXperiment(pl.LightningModule):
@@ -56,6 +57,27 @@ class VAEXperiment(pl.LightningModule):
                                             batch_idx = batch_idx)
 
         self.log_dict({f"val_{key}": val.item() for key, val in val_loss.items()}, sync_dist=True)
+
+        # Calculate FID and Inception Score
+        fid = FID(device=self.curr_device)
+        iscore = InceptionScore(device=self.curr_device)
+
+        # Generate samples for FID calculation - match batch size
+        batch_size = real_img.size(0)
+        samples = self.model.sample(batch_size, self.curr_device, labels=labels)
+        
+        # Resize images to 299x299 for Inception model
+        resize_transform = transforms.Resize((299, 299))
+        samples = resize_transform(samples)
+        real_img = resize_transform(real_img)
+        
+        fid.update((samples, real_img))
+        iscore.update(samples)
+
+        fid_score = fid.compute()
+        iscore_score = iscore.compute()
+
+        self.log_dict({f"fid": fid_score, f"iscore": iscore_score}, sync_dist=True)
 
         
     def on_validation_end(self) -> None:
